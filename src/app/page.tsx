@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { BottomNav, View } from "@/components/bottom-nav";
-import { ParticlesBackground } from "@/components/particles-background";
 import { Dashboard } from "@/components/views/dashboard";
 import { BubbleTimer } from "@/components/views/bubble-timer";
 import { SyllabusManager } from "@/components/views/syllabus-manager";
@@ -25,9 +24,6 @@ function App() {
 
   return (
     <main className="min-h-screen flex flex-col relative">
-      {/* Ambient floating particles background */}
-      <ParticlesBackground />
-
       {/* Top bar */}
       <header className="sticky top-0 z-30 px-4 sm:px-6 py-3 backdrop-blur-xl bg-background/40 border-b border-foreground/5">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
