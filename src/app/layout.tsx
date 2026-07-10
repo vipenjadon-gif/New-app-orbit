@@ -18,6 +18,7 @@ export const metadata: Metadata = {
   title: "CA Study Tracker — Focus, Track, Conquer",
   description: "A beautiful study tracker for Chartered Accountancy students. Bubble focus timer, full syllabus manager, calendar, and progress analytics.",
   keywords: ["CA", "study tracker", "ICAI", "Pomodoro", "syllabus", "calendar"],
+  manifest: "/manifest.json",
   icons: {
     icon: "/logo.png",
     apple: "/logo.png",
@@ -32,6 +33,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <meta name="theme-color" content="#FB923C" />
         {/* Apply theme + dark mode before paint to avoid flash */}
         <script
           dangerouslySetInnerHTML={{
@@ -46,6 +48,18 @@ export default function RootLayout({
                   document.documentElement.classList.add('dark');
                 }
               })();
+            `,
+          }}
+        />
+        {/* Register service worker for offline support */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                  navigator.serviceWorker.register('/sw.js').catch(function() {});
+                });
+              }
             `,
           }}
         />
