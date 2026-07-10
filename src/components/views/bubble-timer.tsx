@@ -212,9 +212,11 @@ export function BubbleTimer() {
   const size = 280;
   const stroke = 14;
   const radius = (size - stroke * 2) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const progress = (duration - remaining) / duration;
-  const offset = circumference * (1 - progress);
+  const ringRadius = radius + 22; // matches the actual rendered ring below
+  const circumference = 2 * Math.PI * ringRadius;
+  const progress = (duration - remaining) / duration; // 0 at start, 1 when done
+  // Ring starts fully drawn and empties as time elapses.
+  const offset = circumference * progress;
 
   return (
     <div className="space-y-5">
@@ -350,7 +352,7 @@ export function BubbleTimer() {
             <circle
               cx={(size + 80) / 2}
               cy={(size + 80) / 2}
-              r={radius + 22}
+              r={ringRadius}
               fill="none"
               stroke="rgba(255,255,255,0.06)"
               strokeWidth={stroke}
@@ -359,7 +361,7 @@ export function BubbleTimer() {
             <motion.circle
               cx={(size + 80) / 2}
               cy={(size + 80) / 2}
-              r={radius + 22}
+              r={ringRadius}
               fill="none"
               stroke="url(#ring-gradient)"
               strokeWidth={stroke}
@@ -376,7 +378,7 @@ export function BubbleTimer() {
               const dotR = radius + 8;
               const cx = (size + 80) / 2 + Math.cos(angle) * dotR;
               const cy = (size + 80) / 2 + Math.sin(angle) * dotR;
-              const lit = i / 60 <= progress;
+              const lit = i / 60 <= 1 - progress;
               return (
                 <circle
                   key={i}
