@@ -33,7 +33,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <meta name="theme-color" content="#FB923C" />
+        <meta name="theme-color" content="#0B0A14" />
         {/* Apply theme + dark mode before paint to avoid flash */}
         <script
           dangerouslySetInnerHTML={{
