@@ -19,7 +19,8 @@ export const metadata: Metadata = {
   description: "A beautiful study tracker for Chartered Accountancy students. Bubble focus timer, full syllabus manager, calendar, and progress analytics.",
   keywords: ["CA", "study tracker", "ICAI", "Pomodoro", "syllabus", "calendar"],
   icons: {
-    icon: "/logo.svg",
+    icon: "/logo.png",
+    apple: "/logo.png",
   },
 };
 
