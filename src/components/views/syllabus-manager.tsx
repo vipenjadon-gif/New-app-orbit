@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useStudyStore } from "@/lib/study-store";
 import type { ChapterStatus } from "@/lib/study-store";
 import { SYLLABUS } from "@/lib/ca-syllabus";
-import type { SyllabusLevel } from "@/lib/ca-syllabus";
+import type { SyllabusLevel, Paper, Chapter } from "@/lib/ca-syllabus";
 import { Icon } from "@/components/icon";
 import {
   ChevronRight,
@@ -15,6 +15,8 @@ import {
   BookOpen,
   X,
   StickyNote,
+  Plus,
+  Trash2,
 } from "lucide-react";
 
 const STATUS_META: Record<ChapterStatus, { label: string; icon: any; color: string }> = {
@@ -23,16 +25,52 @@ const STATUS_META: Record<ChapterStatus, { label: string; icon: any; color: stri
   completed: { label: "Completed", icon: CheckCircle2, color: "text-emerald-400" },
 };
 
+const CUSTOM_LEVEL_ID = "custom";
+
 export function SyllabusManager() {
   const [activeLevel, setActiveLevel] = useState(SYLLABUS[0].id);
   const [expandedPapers, setExpandedPapers] = useState<Set<string>>(new Set([SYLLABUS[0].papers[0].id]));
   const [noteChapterId, setNoteChapterId] = useState<string | null>(null);
+  const [showAddPaper, setShowAddPaper] = useState(false);
+  const [addChapterForPaper, setAddChapterForPaper] = useState<string | null>(null);
 
   const chapterProgress = useStudyStore((s) => s.chapterProgress);
   const setChapterStatus = useStudyStore((s) => s.setChapterStatus);
   const setChapterNotes = useStudyStore((s) => s.setChapterNotes);
+  const customPapers = useStudyStore((s) => s.customPapers);
+  const addCustomPaper = useStudyStore((s) => s.addCustomPaper);
+  const removeCustomPaper = useStudyStore((s) => s.removeCustomPaper);
+  const addCustomChapter = useStudyStore((s) => s.addCustomChapter);
+  const removeCustomChapter = useStudyStore((s) => s.removeCustomChapter);
 
-  const level: SyllabusLevel = SYLLABUS.find((l) => l.id === activeLevel)!;
+  // Build the "Custom" pseudo-level from user-added papers, so it slots
+  // into all the same rendering logic as the built-in Foundation/Intermediate/Final.
+  const customLevel: SyllabusLevel = useMemo(
+    () => ({
+      id: CUSTOM_LEVEL_ID,
+      name: "Custom",
+      description: "Your own subjects & chapters",
+      papers: customPapers.map(
+        (cp): Paper => ({
+          id: cp.id,
+          code: "MY",
+          name: cp.name,
+          marks: 0,
+          icon: "Sparkles",
+          color: "#A78BFA",
+          chapters: cp.chapters.map(
+            (cc): Chapter => ({ id: cc.id, name: cc.name, topics: cc.topics })
+          ),
+        })
+      ),
+    }),
+    [customPapers]
+  );
+
+  const allLevels: SyllabusLevel[] = useMemo(() => [...SYLLABUS, customLevel], [customLevel]);
+
+  const level: SyllabusLevel = allLevels.find((l) => l.id === activeLevel) ?? allLevels[0];
+  const isCustomLevel = level.id === CUSTOM_LEVEL_ID;
 
   const togglePaper = (paperId: string) => {
     setExpandedPapers((prev) => {
@@ -49,9 +87,9 @@ export function SyllabusManager() {
     setChapterStatus(chapterId, next);
   };
 
-  // Overall completion per level
+  // Overall completion per level (includes Custom)
   const levelStats = useMemo(() => {
-    return SYLLABUS.map((lvl) => {
+    return allLevels.map((lvl) => {
       const chapters = lvl.papers.flatMap((p) => p.chapters);
       const completed = chapters.filter((c) => chapterProgress[c.id]?.status === "completed").length;
       const inProgress = chapters.filter((c) => chapterProgress[c.id]?.status === "in-progress").length;
@@ -60,10 +98,10 @@ export function SyllabusManager() {
         total: chapters.length,
         completed,
         inProgress,
-        pct: Math.round((completed / chapters.length) * 100),
+        pct: chapters.length > 0 ? Math.round((completed / chapters.length) * 100) : 0,
       };
     });
-  }, [chapterProgress]);
+  }, [allLevels, chapterProgress]);
 
   const currentLevelStat = levelStats.find((s) => s.level.id === activeLevel)!;
 
@@ -88,6 +126,9 @@ export function SyllabusManager() {
             <p className="text-sm text-muted-foreground">
               {SYLLABUS.length} levels · {SYLLABUS.reduce((s, l) => s + l.papers.length, 0)} papers ·{" "}
               {SYLLABUS.reduce((s, l) => s + l.papers.flatMap((p) => p.chapters).length, 0)} chapters
+              {customPapers.length > 0 && (
+                <> · {customPapers.length} custom subject{customPapers.length !== 1 ? "s" : ""}</>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -127,7 +168,7 @@ export function SyllabusManager() {
 
       {/* Level tabs */}
       <div className="flex flex-wrap gap-2">
-        {SYLLABUS.map((lvl) => {
+        {allLevels.map((lvl) => {
           const stat = levelStats.find((s) => s.level.id === lvl.id)!;
           const active = lvl.id === activeLevel;
           return (
@@ -150,16 +191,47 @@ export function SyllabusManager() {
       {/* Level header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold">{level.name} Level</h2>
+          <h2 className="text-lg font-semibold">{level.name} {isCustomLevel ? "" : "Level"}</h2>
           <p className="text-xs text-muted-foreground">{level.description}</p>
         </div>
-        <div className="text-right">
-          <p className="text-2xl font-bold gradient-accent-text">{currentLevelStat.pct}%</p>
-          <p className="text-[10px] text-muted-foreground">
-            {currentLevelStat.completed} done · {currentLevelStat.inProgress} active
-          </p>
+        <div className="flex items-center gap-3">
+          {isCustomLevel && (
+            <button
+              onClick={() => setShowAddPaper(true)}
+              className="px-3 py-2 rounded-full text-xs font-medium gradient-accent text-white glow-soft flex items-center gap-1.5"
+            >
+              <Plus size={14} /> Add Subject
+            </button>
+          )}
+          <div className="text-right">
+            <p className="text-2xl font-bold gradient-accent-text">{currentLevelStat.pct}%</p>
+            <p className="text-[10px] text-muted-foreground">
+              {currentLevelStat.completed} done · {currentLevelStat.inProgress} active
+            </p>
+          </div>
         </div>
       </div>
+
+      {/* Empty state for Custom with no subjects yet */}
+      {isCustomLevel && level.papers.length === 0 && (
+        <div className="glass-card rounded-3xl p-8 text-center flex flex-col items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl gradient-accent flex items-center justify-center">
+            <Plus size={20} className="text-white" />
+          </div>
+          <div>
+            <p className="font-medium text-sm">No custom subjects yet</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Add anything outside the official syllabus — a revision list, a side subject, whatever you're tracking.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowAddPaper(true)}
+            className="mt-1 px-4 py-2 rounded-full text-sm font-medium gradient-accent text-white glow-soft flex items-center gap-1.5"
+          >
+            <Plus size={14} /> Add your first subject
+          </button>
+        </div>
+      )}
 
       {/* Papers list */}
       <div className="space-y-3">
@@ -169,7 +241,7 @@ export function SyllabusManager() {
           const completed = paperChapters.filter(
             (c) => chapterProgress[c.id]?.status === "completed"
           ).length;
-          const pct = Math.round((completed / paperChapters.length) * 100);
+          const pct = paperChapters.length > 0 ? Math.round((completed / paperChapters.length) * 100) : 0;
           return (
             <motion.div
               key={paper.id}
@@ -178,46 +250,70 @@ export function SyllabusManager() {
               transition={{ duration: 0.4, delay: idx * 0.05 }}
               className="glass-card rounded-3xl overflow-hidden"
             >
-              <button
-                onClick={() => togglePaper(paper.id)}
-                className="w-full p-4 sm:p-5 flex items-center gap-4 hover:bg-foreground/5 transition-colors text-left"
-              >
-                <div
-                  className="w-11 h-11 rounded-2xl flex items-center justify-center text-white flex-shrink-0"
-                  style={{ background: `linear-gradient(135deg, ${paper.color}, ${paper.color}cc)` }}
+              <div className="w-full p-4 sm:p-5 flex items-center gap-4">
+                <button
+                  onClick={() => togglePaper(paper.id)}
+                  className="flex-1 flex items-center gap-4 hover:bg-foreground/5 transition-colors text-left rounded-2xl -m-1 p-1"
                 >
-                  <Icon name={paper.icon} size={18} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {paper.code}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground">·</span>
-                    <span className="text-[10px] text-muted-foreground">{paper.marks} marks</span>
+                  <div
+                    className="w-11 h-11 rounded-2xl flex items-center justify-center text-white flex-shrink-0"
+                    style={{ background: `linear-gradient(135deg, ${paper.color}, ${paper.color}cc)` }}
+                  >
+                    <Icon name={paper.icon} size={18} />
                   </div>
-                  <h3 className="font-semibold text-sm sm:text-base truncate">{paper.name}</h3>
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <div className="h-1.5 rounded-full bg-foreground/10 overflow-hidden flex-1">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${pct}%` }}
-                        transition={{ duration: 0.6 }}
-                        className="h-full rounded-full gradient-accent"
-                      />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      {!isCustomLevel && (
+                        <>
+                          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                            {paper.code}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">·</span>
+                          <span className="text-[10px] text-muted-foreground">{paper.marks} marks</span>
+                        </>
+                      )}
+                      {isCustomLevel && (
+                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                          Custom subject
+                        </span>
+                      )}
                     </div>
-                    <span className="text-[10px] text-muted-foreground">
-                      {completed}/{paperChapters.length}
-                    </span>
+                    <h3 className="font-semibold text-sm sm:text-base truncate">{paper.name}</h3>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <div className="h-1.5 rounded-full bg-foreground/10 overflow-hidden flex-1">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${pct}%` }}
+                          transition={{ duration: 0.6 }}
+                          className="h-full rounded-full gradient-accent"
+                        />
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">
+                        {completed}/{paperChapters.length}
+                      </span>
+                    </div>
                   </div>
-                </div>
-                <ChevronRight
-                  size={18}
-                  className={`text-muted-foreground transition-transform flex-shrink-0 ${
-                    expanded ? "rotate-90" : ""
-                  }`}
-                />
-              </button>
+                  <ChevronRight
+                    size={18}
+                    className={`text-muted-foreground transition-transform flex-shrink-0 ${
+                      expanded ? "rotate-90" : ""
+                    }`}
+                  />
+                </button>
+                {isCustomLevel && (
+                  <button
+                    onClick={() => {
+                      if (confirm(`Remove "${paper.name}" and all its chapters?`)) {
+                        removeCustomPaper(paper.id);
+                      }
+                    }}
+                    className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-red-400/10 flex-shrink-0"
+                    aria-label="Delete subject"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
+              </div>
 
               <AnimatePresence>
                 {expanded && (
@@ -259,6 +355,15 @@ export function SyllabusManager() {
                                     >
                                       <StickyNote size={13} />
                                     </button>
+                                    {isCustomLevel && (
+                                      <button
+                                        onClick={() => removeCustomChapter(paper.id, chapter.id)}
+                                        className="w-7 h-7 rounded-lg hover:bg-red-400/10 flex items-center justify-center text-muted-foreground hover:text-red-400"
+                                        aria-label="Delete chapter"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    )}
                                     <span className={`text-[10px] ${meta.color}`}>
                                       {meta.label}
                                     </span>
@@ -278,7 +383,7 @@ export function SyllabusManager() {
                                 )}
                                 {notes && (
                                   <p className="text-xs text-muted-foreground mt-2 italic line-clamp-2">
-                                    “{notes}”
+                                    "{notes}"
                                   </p>
                                 )}
                               </div>
@@ -286,6 +391,14 @@ export function SyllabusManager() {
                           </div>
                         );
                       })}
+                      {isCustomLevel && (
+                        <button
+                          onClick={() => setAddChapterForPaper(paper.id)}
+                          className="w-full p-3 rounded-2xl glass glass-hover flex items-center justify-center gap-1.5 text-xs font-medium text-primary"
+                        >
+                          <Plus size={14} /> Add chapter
+                        </button>
+                      )}
                     </div>
                   </motion.div>
                 )}
@@ -300,11 +413,46 @@ export function SyllabusManager() {
         {noteChapterId && (
           <NotesModal
             chapterId={noteChapterId}
+            levels={allLevels}
             initialNote={chapterProgress[noteChapterId]?.notes ?? ""}
             onClose={() => setNoteChapterId(null)}
             onSave={(text) => {
               setChapterNotes(noteChapterId, text);
               setNoteChapterId(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Add subject modal */}
+      <AnimatePresence>
+        {showAddPaper && (
+          <PromptModal
+            title="Add a custom subject"
+            label="Subject name"
+            placeholder="e.g. GK for Interview, Excel Practice"
+            confirmLabel="Add subject"
+            onClose={() => setShowAddPaper(false)}
+            onSave={(name) => {
+              addCustomPaper(name);
+              setShowAddPaper(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Add chapter modal */}
+      <AnimatePresence>
+        {addChapterForPaper && (
+          <PromptModal
+            title="Add a chapter"
+            label="Chapter name"
+            placeholder="e.g. Chapter 1 - Basics"
+            confirmLabel="Add chapter"
+            onClose={() => setAddChapterForPaper(null)}
+            onSave={(name) => {
+              addCustomChapter(addChapterForPaper, name);
+              setAddChapterForPaper(null);
             }}
           />
         )}
@@ -329,11 +477,13 @@ export function SyllabusManager() {
 
 function NotesModal({
   chapterId,
+  levels,
   initialNote,
   onClose,
   onSave,
 }: {
   chapterId: string;
+  levels: SyllabusLevel[];
   initialNote: string;
   onClose: () => void;
   onSave: (text: string) => void;
@@ -342,7 +492,7 @@ function NotesModal({
 
   // Find chapter name for the title
   let chapterName = "Chapter notes";
-  for (const lvl of SYLLABUS) {
+  for (const lvl of levels) {
     for (const p of lvl.papers) {
       const ch = p.chapters.find((c) => c.id === chapterId);
       if (ch) {
@@ -414,4 +564,89 @@ function NotesModal({
   );
 }
 
-// Suppress unused import warnings
+function PromptModal({
+  title,
+  label,
+  placeholder,
+  confirmLabel,
+  onClose,
+  onSave,
+}: {
+  title: string;
+  label: string;
+  placeholder: string;
+  confirmLabel: string;
+  onClose: () => void;
+  onSave: (value: string) => void;
+}) {
+  const [value, setValue] = useState("");
+
+  const submit = () => {
+    const trimmed = value.trim();
+    if (trimmed) onSave(trimmed);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.92, y: 20 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.92, y: 20 }}
+        transition={{ type: "spring", stiffness: 400, damping: 30 }}
+        className="glass-card rounded-3xl p-6 w-full max-w-sm"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl gradient-accent flex items-center justify-center">
+              <Plus size={15} className="text-white" />
+            </div>
+            <h3 className="font-semibold text-sm">{title}</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-lg hover:bg-foreground/10 flex items-center justify-center"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <label className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 block">
+          {label}
+        </label>
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+          }}
+          placeholder={placeholder}
+          className="w-full p-3 rounded-2xl glass bg-transparent text-sm outline-none focus:ring-1 focus:ring-primary/40 placeholder:text-muted-foreground/60"
+          autoFocus
+        />
+
+        <div className="flex justify-end gap-2 mt-4">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-full text-sm glass glass-hover"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={!value.trim()}
+            className="px-5 py-2 rounded-full text-sm gradient-accent text-white glow-soft disabled:opacity-40"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}

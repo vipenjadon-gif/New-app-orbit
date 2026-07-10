@@ -19,9 +19,22 @@ interface ChapterProgress {
   updatedAt: number;
 }
 
+export interface CustomChapter {
+  id: string;
+  name: string;
+  topics: string[];
+}
+
+export interface CustomPaper {
+  id: string;
+  name: string;
+  chapters: CustomChapter[];
+}
+
 interface StudyState {
   sessions: StudySession[];
   chapterProgress: Record<string, ChapterProgress>;
+  customPapers: CustomPaper[];
   goals: {
     dailyMinutes: number;
     weeklyMinutes: number;
@@ -33,6 +46,10 @@ interface StudyState {
   setChapterNotes: (chapterId: string, notes: string) => void;
   setDailyGoal: (minutes: number) => void;
   setWeeklyGoal: (minutes: number) => void;
+  addCustomPaper: (name: string) => void;
+  removeCustomPaper: (paperId: string) => void;
+  addCustomChapter: (paperId: string, name: string) => void;
+  removeCustomChapter: (paperId: string, chapterId: string) => void;
 }
 
 export const useStudyStore = create<StudyState>()(
@@ -40,6 +57,7 @@ export const useStudyStore = create<StudyState>()(
     (set) => ({
       sessions: [],
       chapterProgress: {},
+      customPapers: [],
       goals: { dailyMinutes: 180, weeklyMinutes: 1080 },
 
       addSession: (s) =>
@@ -84,6 +102,51 @@ export const useStudyStore = create<StudyState>()(
 
       setWeeklyGoal: (minutes) =>
         set((state) => ({ goals: { ...state.goals, weeklyMinutes: minutes } })),
+
+      addCustomPaper: (name) =>
+        set((state) => ({
+          customPapers: [
+            ...state.customPapers,
+            {
+              id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              name,
+              chapters: [],
+            },
+          ],
+        })),
+
+      removeCustomPaper: (paperId) =>
+        set((state) => ({
+          customPapers: state.customPapers.filter((p) => p.id !== paperId),
+        })),
+
+      addCustomChapter: (paperId, name) =>
+        set((state) => ({
+          customPapers: state.customPapers.map((p) =>
+            p.id === paperId
+              ? {
+                  ...p,
+                  chapters: [
+                    ...p.chapters,
+                    {
+                      id: `cc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                      name,
+                      topics: [],
+                    },
+                  ],
+                }
+              : p
+          ),
+        })),
+
+      removeCustomChapter: (paperId, chapterId) =>
+        set((state) => ({
+          customPapers: state.customPapers.map((p) =>
+            p.id === paperId
+              ? { ...p, chapters: p.chapters.filter((c) => c.id !== chapterId) }
+              : p
+          ),
+        })),
     }),
     {
       name: "ca-study-store-v1",
