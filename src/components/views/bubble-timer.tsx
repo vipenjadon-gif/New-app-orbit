@@ -1,4 +1,290 @@
-me={`relative z-10 flex items-center gap-1.5 px-4 sm:px-6 py-2 rounded-full text-sm font-medium transition-colors ${
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { useStudyStore } from "@/lib/study-store";
+import { SYLLABUS } from "@/lib/ca-syllabus";
+import { todayISO, formatMinutes, formatClock } from "@/lib/time";
+import {
+  Play,
+  Pause,
+  RotateCcw,
+  Coffee,
+  Brain,
+  Check,
+  ChevronDown,
+  Flame,
+  Sparkles,
+  SkipForward,
+} from "lucide-react";
+
+type Mode = "focus" | "break";
+type TimerState = "idle" | "running" | "paused" | "done";
+
+const PRESETS: { label: string; minutes: number }[] = [
+  { label: "Pomodoro", minutes: 25 },
+  { label: "Deep", minutes: 50 },
+  { label: "Sprint", minutes: 15 },
+  { label: "Marathon", minutes: 90 },
+];
+
+const BREAK_PRESETS: { label: string; minutes: number }[] = [
+  { label: "Short", minutes: 5 },
+  { label: "Medium", minutes: 10 },
+  { label: "Long", minutes: 15 },
+  { label: "Reset", minutes: 30 },
+];
+
+export function BubbleTimer() {
+  const [mode, setMode] = useState<Mode>("focus");
+  const [duration, setDuration] = useState(25 * 60); // seconds
+  const [remaining, setRemaining] = useState(25 * 60);
+  const [state, setState] = useState<TimerState>("idle");
+  const [selectedLevel, setSelectedLevel] = useState(SYLLABUS[0].id);
+  const [selectedPaper, setSelectedPaper] = useState(SYLLABUS[0].papers[0].id);
+  const [selectedChapter, setSelectedChapter] = useState(SYLLABUS[0].papers[0].chapters[0].id);
+  const [showConfig, setShowConfig] = useState(false);
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  const [customMinutes, setCustomMinutes] = useState("");
+
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const addSession = useStudyStore((s) => s.addSession);
+  const allSessions = useStudyStore((s) => s.sessions);
+
+  // Today's stats for the badge above the timer
+  const today = todayISO();
+  const todayFocusSessions = allSessions.filter(
+    (s) => s.date === today && s.completed
+  );
+  const todayMinutes = todayFocusSessions.reduce(
+    (sum, s) => sum + s.durationMin,
+    0
+  );
+  // Pomodoro round indicator (4 sessions = 1 round)
+  const POMODORO_ROUND = 4;
+  const roundsCompleted = Math.floor(todayFocusSessions.length / POMODORO_ROUND);
+  const sessionsInCurrentRound = todayFocusSessions.length % POMODORO_ROUND;
+
+  // Options based on selections
+  const levels = SYLLABUS;
+  const papers = useMemo(
+    () => SYLLABUS.find((l) => l.id === selectedLevel)?.papers ?? [],
+    [selectedLevel]
+  );
+  const chapters = useMemo(
+    () => papers.find((p) => p.id === selectedPaper)?.chapters ?? [],
+    [papers, selectedPaper]
+  );
+
+  // When user changes the duration preset (only allowed in idle state),
+  // update remaining time too. We use a state setter to avoid an effect.
+  const setDurationAndRemaining = (sec: number) => {
+    setDuration(sec);
+    setRemaining(sec);
+    setState("idle");
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, []);
+
+  // Tick logic
+  useEffect(() => {
+    if (state !== "running") return;
+    intervalRef.current = setInterval(() => {
+      setRemaining((r) => {
+        if (r <= 1) {
+          clearInterval(intervalRef.current!);
+          intervalRef.current = null;
+          setState("done");
+          // If focus mode ended, save session
+          if (mode === "focus") {
+            const paper = papers.find((p) => p.id === selectedPaper);
+            const chapter = chapters.find((c) => c.id === selectedChapter);
+            addSession({
+              date: todayISO(),
+              startedAt: Date.now() - duration * 1000,
+              durationMin: Math.round(duration / 60),
+              subject: paper?.name ?? "Free Study",
+              chapter: chapter?.name ?? "Free Study",
+              completed: true,
+            });
+          }
+          // Play subtle sound via Web Audio
+          try {
+            const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.frequency.value = 660;
+            gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.5);
+            osc.start();
+            osc.stop(ctx.currentTime + 1.6);
+          } catch {
+            /* ignore */
+          }
+          return 0;
+        }
+        return r - 1;
+      });
+    }, 1000);
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [state, mode, duration, papers, chapters, selectedPaper, selectedChapter, addSession]);
+
+  const handleStart = () => {
+    if (state === "done") {
+      setRemaining(duration);
+    }
+    setState("running");
+  };
+  const handlePause = () => setState("paused");
+  const handleReset = () => {
+    setState("idle");
+    setRemaining(duration);
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  };
+
+  const handleSkip = () => {
+    // Treat the current session as completed early.
+    // Saves a focus session with the elapsed time (rounded up to a minute).
+    if (state === "idle") return;
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    const elapsedSec = duration - remaining;
+    if (mode === "focus" && elapsedSec >= 60) {
+      const paper = papers.find((p) => p.id === selectedPaper);
+      const chapter = chapters.find((c) => c.id === selectedChapter);
+      addSession({
+        date: todayISO(),
+        startedAt: Date.now() - elapsedSec * 1000,
+        durationMin: Math.max(1, Math.round(elapsedSec / 60)),
+        subject: paper?.name ?? "Free Study",
+        chapter: chapter?.name ?? "Free Study",
+        completed: true,
+      });
+    }
+    setState("done");
+    setRemaining(0);
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 660;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.2);
+      osc.start();
+      osc.stop(ctx.currentTime + 1.3);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const switchMode = (m: Mode) => {
+    setMode(m);
+    setState("idle");
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    setDurationAndRemaining(m === "focus" ? 25 * 60 : 5 * 60);
+  };
+
+  // Circle geometry
+  const size = 280;
+  const stroke = 14;
+  const radius = (size - stroke * 2) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const progress = (duration - remaining) / duration;
+  const offset = circumference * (1 - progress);
+
+  return (
+    <div className="space-y-5">
+      {/* Today's sessions badge + Pomodoro rounds */}
+      <motion.div
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="flex items-center justify-center gap-3"
+      >
+        <div className="glass rounded-full px-4 py-2 flex items-center gap-2">
+          <Flame size={13} className="text-primary" />
+          <span className="text-xs font-medium">
+            {todayFocusSessions.length} session{todayFocusSessions.length !== 1 ? "s" : ""} today
+          </span>
+          <span className="text-[10px] text-muted-foreground">·</span>
+          <span className="text-xs text-muted-foreground">
+            {formatMinutes(todayMinutes)}
+          </span>
+        </div>
+      </motion.div>
+
+      {/* Pomodoro round dots */}
+      <div className="flex flex-col items-center gap-1.5">
+        <div className="flex items-center gap-1.5">
+          {Array.from({ length: POMODORO_ROUND }).map((_, i) => {
+            const filled = i < sessionsInCurrentRound;
+            return (
+              <motion.div
+                key={i}
+                initial={{ scale: 0.6, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ delay: 0.1 + i * 0.05 }}
+                className={`w-2.5 h-2.5 rounded-full transition-all ${
+                  filled
+                    ? "gradient-accent glow-soft"
+                    : "bg-foreground/15"
+                }`}
+              />
+            );
+          })}
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          {roundsCompleted > 0
+            ? `${roundsCompleted} round${roundsCompleted !== 1 ? "s" : ""} completed · ${sessionsInCurrentRound}/4 to next`
+            : `${sessionsInCurrentRound}/4 sessions to a long break`}
+        </p>
+      </div>
+
+      {/* Mode toggle */}
+      <div className="flex justify-center">
+        <div className="relative inline-flex p-1 rounded-full glass-strong">
+          <motion.div
+            className="absolute top-1 bottom-1 rounded-full gradient-accent glow-soft"
+            initial={false}
+            animate={{ left: mode === "focus" ? 4 : "50%", right: mode === "focus" ? "50%" : 4 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            style={{ width: "calc(50% - 4px)" }}
+          />
+          <button
+            onClick={() => switchMode("focus")}
+            className={`relative z-10 flex items-center gap-1.5 px-4 sm:px-6 py-2 rounded-full text-sm font-medium transition-colors ${
+              mode === "focus" ? "text-white" : "text-muted-foreground"
+            }`}
+          >
+            <Brain size={14} /> Focus
+          </button>
+          <button
+            onClick={() => switchMode("break")}
+            className={`relative z-10 flex items-center gap-1.5 px-4 sm:px-6 py-2 rounded-full text-sm font-medium transition-colors ${
               mode === "break" ? "text-white" : "text-muted-foreground"
             }`}
           >
@@ -297,7 +583,55 @@ me={`relative z-10 flex items-center gap-1.5 px-4 sm:px-6 py-2 rounded-full text
               </button>
             );
           })}
+          <button
+            onClick={() => setShowCustomInput((v) => !v)}
+            disabled={state === "running"}
+            className={`px-4 py-2 rounded-full text-sm font-medium transition-all disabled:opacity-50 ${
+              showCustomInput
+                ? "gradient-accent text-white glow-soft"
+                : "glass glass-hover text-foreground/80"
+            }`}
+          >
+            Custom
+          </button>
         </div>
+
+        <AnimatePresence>
+          {showCustomInput && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.25 }}
+              className="overflow-hidden"
+            >
+              <div className="flex items-center justify-center gap-2 mt-3">
+                <input
+                  type="number"
+                  min={1}
+                  max={300}
+                  value={customMinutes}
+                  onChange={(e) => setCustomMinutes(e.target.value)}
+                  placeholder="Minutes"
+                  className="w-24 px-3 py-2 rounded-full glass text-sm text-center outline-none"
+                />
+                <button
+                  onClick={() => {
+                    const mins = Math.max(1, Math.min(300, Math.round(Number(customMinutes) || 0)));
+                    if (mins > 0) {
+                      setDurationAndRemaining(mins * 60);
+                      setShowCustomInput(false);
+                      setCustomMinutes("");
+                    }
+                  }}
+                  className="px-4 py-2 rounded-full gradient-accent text-white text-sm font-medium glow-soft"
+                >
+                  Set
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Session configuration */}
