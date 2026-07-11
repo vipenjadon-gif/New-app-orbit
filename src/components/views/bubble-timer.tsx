@@ -48,6 +48,7 @@ export function BubbleTimer() {
   const [customMinutes, setCustomMinutes] = useState("");
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const endTimeRef = useRef<number | null>(null); // real clock timestamp when the session should end
   const addSession = useStudyStore((s) => s.addSession);
   const allSessions = useStudyStore((s) => s.sessions);
 
@@ -91,67 +92,92 @@ export function BubbleTimer() {
     };
   }, []);
 
-  // Tick logic
+  // Completes the current session: saves it (if focus mode), plays a chime, resets state.
+  const finishSession = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    endTimeRef.current = null;
+    setState("done");
+    setRemaining(0);
+    if (mode === "focus") {
+      const paper = papers.find((p) => p.id === selectedPaper);
+      const chapter = chapters.find((c) => c.id === selectedChapter);
+      addSession({
+        date: todayISO(),
+        startedAt: Date.now() - duration * 1000,
+        durationMin: Math.round(duration / 60),
+        subject: paper?.name ?? "Free Study",
+        chapter: chapter?.name ?? "Free Study",
+        completed: true,
+      });
+    }
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 660;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.5);
+      osc.start();
+      osc.stop(ctx.currentTime + 1.6);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // Tick logic — driven by the real clock (endTimeRef), not by counting interval
+  // firings. This way, if the OS suspends the timer while the screen is off or
+  // the app is backgrounded, the moment it resumes we recompute the correct
+  // remaining time instantly instead of drifting or getting stuck.
   useEffect(() => {
     if (state !== "running") return;
-    intervalRef.current = setInterval(() => {
-      setRemaining((r) => {
-        if (r <= 1) {
-          clearInterval(intervalRef.current!);
-          intervalRef.current = null;
-          setState("done");
-          // If focus mode ended, save session
-          if (mode === "focus") {
-            const paper = papers.find((p) => p.id === selectedPaper);
-            const chapter = chapters.find((c) => c.id === selectedChapter);
-            addSession({
-              date: todayISO(),
-              startedAt: Date.now() - duration * 1000,
-              durationMin: Math.round(duration / 60),
-              subject: paper?.name ?? "Free Study",
-              chapter: chapter?.name ?? "Free Study",
-              completed: true,
-            });
-          }
-          // Play subtle sound via Web Audio
-          try {
-            const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.frequency.value = 660;
-            gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
-            gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 1.5);
-            osc.start();
-            osc.stop(ctx.currentTime + 1.6);
-          } catch {
-            /* ignore */
-          }
-          return 0;
-        }
-        return r - 1;
-      });
-    }, 1000);
+
+    const tick = () => {
+      if (endTimeRef.current == null) return;
+      const secLeft = Math.max(0, Math.round((endTimeRef.current - Date.now()) / 1000));
+      if (secLeft <= 0) {
+        finishSession();
+      } else {
+        setRemaining(secLeft);
+      }
+    };
+
+    intervalRef.current = setInterval(tick, 1000);
+
+    // Re-sync immediately when the app comes back to the foreground, since the
+    // interval above is paused by Android while the screen is off / app is backgrounded.
+    const onResume = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onResume);
+    window.addEventListener("focus", onResume);
+
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
+      document.removeEventListener("visibilitychange", onResume);
+      window.removeEventListener("focus", onResume);
     };
   }, [state, mode, duration, papers, chapters, selectedPaper, selectedChapter, addSession]);
 
   const handleStart = () => {
-    if (state === "done") {
-      setRemaining(duration);
-    }
+    const base = state === "done" ? duration : remaining;
+    endTimeRef.current = Date.now() + base * 1000;
+    if (state === "done") setRemaining(duration);
     setState("running");
   };
   const handlePause = () => setState("paused");
   const handleReset = () => {
     setState("idle");
     setRemaining(duration);
+    endTimeRef.current = null;
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
@@ -166,7 +192,13 @@ export function BubbleTimer() {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
-    const elapsedSec = duration - remaining;
+    // Re-sync remaining to the real clock first, in case this was backgrounded.
+    const actualRemaining =
+      endTimeRef.current != null
+        ? Math.max(0, Math.round((endTimeRef.current - Date.now()) / 1000))
+        : remaining;
+    endTimeRef.current = null;
+    const elapsedSec = duration - actualRemaining;
     if (mode === "focus" && elapsedSec >= 60) {
       const paper = papers.find((p) => p.id === selectedPaper);
       const chapter = chapters.find((c) => c.id === selectedChapter);
